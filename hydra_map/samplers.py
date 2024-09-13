@@ -4,12 +4,12 @@ from scipy.linalg import sqrtm, solve
 from scipy.integrate import cumulative_trapezoid
 from scipy.interpolate import interp1d
 from scipy.stats import invwishart
-from .models import basis_powerlaw
+from .models import basis_powerlaw_curved
 
 from mpi4py.MPI import SUM as MPI_SUM
 import healpy as hp
 
-def inversion_sample_beta(freqs, data, amps, inv_noise_var, 
+def inversion_sample_beta(freqs, data, amps, inv_noise_var, curv=None,
                           beta_range=(-3.2, -2.2), nu_ref=300., 
                           grid_points=400, interp_kind='linear', 
                           realisations=1, comm=None, verbose=False):
@@ -28,8 +28,11 @@ def inversion_sample_beta(freqs, data, amps, inv_noise_var,
         inv_noise_var (array_like):
             The inverse of the noise variance per frequency channel, per 
             pixel. Expected shape: `(Nfreqs, Npix)`.
+        curv (array_like):
+            Curvature parameter, c, in each pixel. Expected shape: `(Npix,)`. 
+            If not specified, this is set to zero.
         beta_range (tuple of float):
-            Minimum and maximum values of beta, for
+            Minimum and maximum values of beta, for a uniform prior.
         nu_ref (float):
             Reference frequency, in MHz.
         grid_points (int):
@@ -58,16 +61,20 @@ def inversion_sample_beta(freqs, data, amps, inv_noise_var,
         myid = comm.Get_rank()
         nworkers = comm.Get_size()
         
-    # Calculate likelihood values as a function of beta
+    # Grid of beta values
     beta_min, beta_max = beta_range
     beta_vals = np.linspace(beta_min, beta_max, grid_points)
     
     # Empty results array
     Npix = inv_noise_var.shape[1]
     beta_samples = np.zeros((realisations, Npix))
+
+    # Curvature parameter
+    if curv is None:
+        curv = np.zeros(Npix)
     
-    def loglike(beta, amps_p, inv_noise_var_p, data_p):
-        proj = basis_powerlaw(freqs, nu_ref=nu_ref, params=[beta,])
+    def loglike(beta, curv_p, amps_p, inv_noise_var_p, data_p):
+        proj = basis_powerlaw_curved(freqs, nu_ref=nu_ref, params=[beta, curv_p])
         model_p = proj @ amps_p
         return -0.5 * np.sum(inv_noise_var_p * (data_p - model_p)**2.)
     
@@ -84,9 +91,10 @@ def inversion_sample_beta(freqs, data, amps, inv_noise_var,
         amps_p = amps[p,:]
         inv_noise_var_p = inv_noise_var[:,p]
         data_p = data[:,p]
+        curv_p = curv[p]
         
         # Calculate log likelihood vs beta
-        logL = np.array([loglike(beta, amps_p, inv_noise_var_p, data_p) 
+        logL = np.array([loglike(beta, curv_p, amps_p, inv_noise_var_p, data_p) 
                          for beta in beta_vals])
         
         # Remove common factor since it will be normalised away anyway
@@ -108,9 +116,118 @@ def inversion_sample_beta(freqs, data, amps, inv_noise_var,
     if comm is not None:
         beta_samples_all = np.zeros_like(beta_samples.flatten())
         comm.Reduce(beta_samples.flatten(), beta_samples_all, op=MPI_SUM, root=0)
-        beta_samples = beta_samples_all.reshape(beta_samples.shape)
+        if myid == 0:
+            beta_samples = beta_samples_all.reshape(beta_samples.shape)
 
     return beta_samples
+
+
+def inversion_sample_curv(freqs, data, amps, inv_noise_var, 
+                          beta, curv_range=(-0.1, 0.1), nu_ref=300., 
+                          grid_points=400, interp_kind='linear', 
+                          realisations=1, comm=None, verbose=False):
+    """
+    Use inversion sampling to draw samples of the power law spectral index 
+    (beta) parameter.
+
+    Parameters:
+        freqs (array_like):
+            Frequencies that the data maps are evaluated at.
+        data (array_like):
+            Healpix maps for each frequency band, of shape `(Nfreqs, Npix)`.
+        amps (array_like):
+            Amplitudes for the spectral basis functions in each pixel. 
+            Expected shape: `(Npix, Nmodes)`.
+        inv_noise_var (array_like):
+            The inverse of the noise variance per frequency channel, per 
+            pixel. Expected shape: `(Nfreqs, Npix)`.
+        beta (array_like):
+            Spectral index parameter, beta, in each pixel. Expected shape: `(Npix,)`. 
+        curv_range (tuple of float):
+            Minimum and maximum values of curvature, for a uniform prior.
+        nu_ref (float):
+            Reference frequency, in MHz.
+        grid_points (int):
+            How many grid points to evaluate the likelihood function on.
+        interp_kind (str):
+            Which kind of interpolation to use for inverting the conditional 
+            distribution function. See `scipy.interp.interp1d` for options.
+        realisations (int):
+            Number of realisations of the GCR solution to return.
+        comm (MPI communicator):
+            MPI Communicator object.
+        verbose (bool):
+            Whether to print status updates.
+
+    Returns:
+        curv_samples (array_like):
+            Samples of the curvature parameter in each pixel. Shape 
+            `(realisations, Npix)`.
+    """
+    # FIXME: Needs to know the gain parameters too.
+
+    # Set up MPI if enabled
+    myid = 0
+    nworkers = 1
+    if comm is not None:
+        myid = comm.Get_rank()
+        nworkers = comm.Get_size()
+        
+    # Grid of beta values
+    curv_min, curv_max = curv_range
+    curv_vals = np.linspace(curv_min, curv_max, grid_points)
+    
+    # Empty results array
+    Npix = inv_noise_var.shape[1]
+    curv_samples = np.zeros((realisations, Npix))
+    
+    def loglike(beta_p, curv, amps_p, inv_noise_var_p, data_p):
+        proj = basis_powerlaw_curved(freqs, nu_ref=nu_ref, params=[beta_p, curv])
+        model_p = proj @ amps_p
+        return -0.5 * np.sum(inv_noise_var_p * (data_p - model_p)**2.)
+    
+    # Loop over pixels
+    for p in range(Npix):
+
+        if p % nworkers != myid:
+            continue
+
+        if p % 5000 == 0 and verbose:
+            print("Pixel %d / %d" % (p, Npix))
+    
+        # Data and model values in this pixel
+        amps_p = amps[p,:]
+        inv_noise_var_p = inv_noise_var[:,p]
+        data_p = data[:,p]
+        beta_p = beta[p]
+        
+        # Calculate log likelihood vs curv
+        logL = np.array([loglike(beta_p, cc, amps_p, inv_noise_var_p, data_p) 
+                         for cc in curv_vals])
+        
+        # Remove common factor since it will be normalised away anyway
+        logL0 = np.max(logL)
+        likefn = np.exp(logL - logL0)
+
+        # Calculate CDF
+        cdf = cumulative_trapezoid(likefn, curv_vals, initial=0.)
+        cdf /= cdf[-1] # normalise to interval [0, 1]
+    
+        # Build interpolator
+        interp_cdf = interp1d(cdf, curv_vals, kind=interp_kind)
+    
+        # Draw uniform random sample(s) and map to distribution for curvature using CDF
+        uvals = np.random.uniform(size=realisations)
+        curv_samples[:,p] = np.array([interp_cdf(u) for u in uvals])
+    
+    # MPI Reduce to collect all data on root worker
+    if comm is not None:
+        curv_samples_all = np.zeros_like(curv_samples.flatten())
+        comm.Reduce(curv_samples.flatten(), curv_samples_all, op=MPI_SUM, root=0)
+        if myid == 0:
+            curv_samples = curv_samples_all.reshape(curv_samples.shape)
+
+    return curv_samples
 
 
 def invwishart_sample_covmat(amps):
@@ -145,7 +262,7 @@ def invwishart_sample_covmat(amps):
 
 
 def gcr_sample_pixel(freqs, data, proj_fn, proj_params, delta_gains, inv_noise_var, 
-                       Sinv, realisations=1, nu_ref=300., comm=None, verbose=False):
+                     Sinv, realisations=1, nu_ref=300., comm=None, verbose=False):
     """
     Solve Gaussian Constrained Realisation system for spectral parameters 
     in each pixel.
@@ -236,7 +353,10 @@ def gcr_sample_pixel(freqs, data, proj_fn, proj_params, delta_gains, inv_noise_v
     total_s = np.zeros_like(s.flatten())
     if comm is not None:
         comm.Reduce(s.flatten(), total_s, op=MPI_SUM, root=0)
-        total_s = total_s.reshape(s.shape)
+        if myid == 0:
+            total_s = total_s.reshape(s.shape)
+        else:
+            total_s = s
     else:
         total_s = s
     return total_s

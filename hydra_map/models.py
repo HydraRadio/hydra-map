@@ -25,6 +25,16 @@ def basis_powerlaw(nu, nu_ref=300., params=[-2.7,]):
     return np.array([x**beta,]).T
 
 
+def basis_powerlaw_curved(nu, nu_ref=300., params=[-2.7, 0.]):
+    """
+    Shape (Nfreqs, Nmodes).
+    """
+    x = nu / nu_ref
+    beta = params[0]
+    c = params[1]
+    return np.array([x**(beta + c * np.log(x)),]).T
+
+
 def basis_poly_legendre(nu, nu_ref=300., params=[5,]):
     """
     Shape (Nfreqs, Nmodes)

@@ -5,14 +5,13 @@ from mpi4py import MPI
 import numpy as np
 import hydra_map as hmap
 from hydra_map.io import load_and_mask_healpix_map
-from hydra_map.samplers import gcr_sample_pixel, inversion_sample_beta
+from hydra_map.samplers import gcr_sample_pixel, inversion_sample_beta, \
+                               inversion_sample_curv
 import healpy as hp
 import pylab as plt
 import time, os
 
 import argparse
-
-
 
 
 #------------------------------------------------------------------------------
@@ -28,6 +27,8 @@ parser.add_argument('--prior-sigma', dest='sigmaS', type=float, action='store',
                     default=100., help='Std. dev. of prior on amplitude.')
 parser.add_argument('--beta-range', dest='beta_range', type=float, nargs=2, action='store',
                     default=(-3.2, -2.2), help='Prior range of beta (spectral index).')
+parser.add_argument('--curv-range', dest='curv_range', type=float, nargs=2, action='store',
+                    default=None, help='Prior range of spectral curvature parameter.')
 parser.add_argument('--data-dir', dest='data_dir', type=str, action='store',
                     default="./data", help='Directory containing data files.')
 parser.add_argument('--output-dir', dest='out_dir', type=str, action='store',
@@ -46,12 +47,17 @@ args = parser.parse_args()
 niter = args.niters
 nu_ref = args.nu_ref
 
-proj_fn = hmap.models.basis_powerlaw
+proj_fn = hmap.models.basis_powerlaw_curved
 Nmodes = 1
 beta_initial = -2.7
+curv_initial = 0.
 sigmaS = args.sigmaS
 base_seed = args.seed
 beta_range = (np.min(args.beta_range), np.max(args.beta_range))
+if args.curv_range is not None:
+    curv_range = (np.min(args.curv_range), np.max(args.curv_range))
+else:
+    curv_range = None
 root_dir = args.data_dir
 out_dir = args.out_dir
 prefix = args.prefix
@@ -92,6 +98,8 @@ if myid == 0:
     print("     Freqs:  ", data_freqs)
     print("     Nside:  ", hp.npix2nside(data_maps.shape[1]))
     print("beta range:  ", "(%6.3f, %6.3f)" % beta_range)
+    if curv_range is not None:
+        print("curv range:  ", "(%6.3f, %6.3f)" % curv_range)
     print("    Prefix:  ", prefix)
     print("      Seed:  ", base_seed)
     print("-"*50)
@@ -110,7 +118,8 @@ if myid == 0:
 Nfreqs, Npix = data_maps.shape
 
 # Initial guesses
-beta_samples = beta_initial * np.ones((Npix, 1))
+beta_samples = beta_initial * np.ones((Npix,))
+curv_samples = curv_initial * np.ones((Npix,))
 Sinv = np.eye(Nmodes) / (sigmaS)**2.
 
 # Do Gibbs loop
@@ -123,7 +132,7 @@ for n in range(niter):
     s = gcr_sample_pixel(freqs=data_freqs,
                            data=data_maps, 
                            proj_fn=proj_fn,
-                           proj_params=beta_samples,
+                           proj_params=np.column_stack((beta_samples, curv_samples)), 
                            delta_gains=np.zeros_like(data_freqs),
                            inv_noise_var=inv_noise_var, 
                            Sinv=Sinv, 
@@ -133,22 +142,48 @@ for n in range(niter):
     if myid == 0:
         print("\tAmplitude sample took %7.4f sec" % (time.time() - t0))
     
+    
     # (2) SPECTRAL INDEX SAMPLER
     t0 = time.time()
     beta_samples = inversion_sample_beta(freqs=data_freqs, 
                                          data=data_maps, 
                                          amps=s[0], 
+                                         curv=curv_samples,
                                          inv_noise_var=inv_noise_var,
                                          beta_range=beta_range,
+                                         nu_ref=nu_ref,
                                          comm=comm)
-    beta_samples = beta_samples[0][:,np.newaxis] # reshape for next iter
+    beta_samples = beta_samples.flatten() # reshape for next iter
+
     if myid == 0:
         print("\tBeta sample took %7.4f sec" % (time.time() - t0))
+    
+    # (3) SPECTRAL CURVATURE SAMPLER
+    if curv_range is not None:
+        
+        t0 = time.time()
+        curv_samples = inversion_sample_curv(freqs=data_freqs, 
+                                             data=data_maps, 
+                                             amps=s[0], 
+                                             inv_noise_var=inv_noise_var, 
+                                             curv_range=curv_range, 
+                                             beta=beta_samples, 
+                                             nu_ref=nu_ref, 
+                                             grid_points=400, 
+                                             interp_kind='linear', 
+                                             realisations=1, 
+                                             comm=comm)
+        curv_samples = curv_samples.flatten() # reshape for next iter
 
+        if myid == 0:
+            print("\tCurvature sample took %7.4f sec" % (time.time() - t0))
+     
     # OUTPUT SAMPLES
     if myid == 0:
         np.save(os.path.join(out_dir, "%s%s_amps_%05d" % (prefix, suffix, n)), s)
         np.save(os.path.join(out_dir, "%s%s_beta_%05d" % (prefix, suffix, n)), beta_samples)
+        if curv_range is not None:
+            np.save(os.path.join(out_dir, "%s%s_curv_%05d" % (prefix, suffix, n)), curv_samples)
 
 # Print message on completion
 if myid == 0:
