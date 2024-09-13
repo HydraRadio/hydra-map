@@ -26,6 +26,8 @@ parser.add_argument('--ref-freq', dest='nu_ref', type=float, action='store',
                     default=300., help='Reference frequency (in MHz)')
 parser.add_argument('--prior-sigma', dest='sigmaS', type=float, action='store',
                     default=100., help='Std. dev. of prior on amplitude.')
+parser.add_argument('--beta-range', dest='beta_range', type=float, nargs=2, action='store',
+                    default=(-3.2, -2.2), help='Prior range of beta (spectral index).')
 parser.add_argument('--data-dir', dest='data_dir', type=str, action='store',
                     default="./data", help='Directory containing data files.')
 parser.add_argument('--output-dir', dest='out_dir', type=str, action='store',
@@ -46,7 +48,7 @@ Nmodes = 1
 beta_initial = -2.7
 sigmaS = args.sigmaS
 base_seed = args.seed
-
+beta_range = (np.min(args.beta_range), np.max(args.beta_range))
 root_dir = args.data_dir
 out_dir = args.out_dir
 prefix = args.prefix
@@ -82,11 +84,12 @@ inv_noise_var = data_file['inv_noise_var']
 
 if myid == 0:
     print("-"*50)
-    print("DATA SUMMARY")
-    print("    Freqs:  ", data_freqs)
-    print("    Nside:  ", hp.npix2nside(data_maps.shape[1]))
-    print("    Prefix: ", prefix)
-    print("    Seed:   ", base_seed)
+    print("DATA + MODEL SUMMARY")
+    print("     Freqs:  ", data_freqs)
+    print("     Nside:  ", hp.npix2nside(data_maps.shape[1]))
+    print("beta range:  ", "(%6.3f, %6.3f)" % beta_range)
+    print("    Prefix:  ", prefix)
+    print("      Seed:  ", base_seed)
     print("-"*50)
 
 if myid == 0:
@@ -132,6 +135,7 @@ for n in range(niter):
                                          data=data_maps, 
                                          amps=s[0], 
                                          inv_noise_var=inv_noise_var,
+                                         beta_range=beta_range,
                                          comm=comm)
     beta_samples = beta_samples[0][:,np.newaxis] # reshape for next iter
     if myid == 0:
