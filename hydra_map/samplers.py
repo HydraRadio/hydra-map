@@ -9,38 +9,48 @@ from .models import basis_powerlaw
 from mpi4py.MPI import SUM as MPI_SUM
 import healpy as hp
 
-def inversion_sample_beta(freqs, data, amps, inv_noise_var, beta_range=(-3.2, -2.2),
-                          nu_ref=300., grid_points=400, interp_kind='linear', 
-                          realisations=1, comm=None):
+def inversion_sample_beta(freqs, data, amps, inv_noise_var, 
+                          beta_range=(-3.2, -2.2), nu_ref=300., 
+                          grid_points=400, interp_kind='linear', 
+                          realisations=1, comm=None, verbose=False):
     """
-    Use inversion sampling to draw samples of the power law beta parameter.
+    Use inversion sampling to draw samples of the power law spectral index 
+    (beta) parameter.
 
     Parameters:
         freqs (array_like):
-            xxx
+            Frequencies that the data maps are evaluated at.
         data (array_like):
-            xxx
+            Healpix maps for each frequency band, of shape `(Nfreqs, Npix)`.
         amps (array_like):
-            xxx
+            Amplitudes for the spectral basis functions in each pixel. 
+            Expected shape: `(Npix, Nmodes)`.
         inv_noise_var (array_like):
-            xxx
+            The inverse of the noise variance per frequency channel, per 
+            pixel. Expected shape: `(Nfreqs, Npix)`.
         beta_range (tuple of float):
-            xxx
+            Minimum and maximum values of beta, for
         nu_ref (float):
-            xxx
+            Reference frequency, in MHz.
         grid_points (int):
-            xxx
+            How many grid points to evaluate the likelihood function on.
         interp_kind (str):
-            xxx
+            Which kind of interpolation to use for inverting the conditional 
+            distribution function. See `scipy.interp.interp1d` for options.
         realisations (int):
-            xxx
-        comm (MPI Communicator):
-            xxx
+            Number of realisations of the GCR solution to return.
+        comm (MPI communicator):
+            MPI Communicator object.
+        verbose (bool):
+            Whether to print status updates.
 
     Returns:
         beta_samples (array_like):
-            xxx
+            Samples of the beta parameter in each pixel. Shape 
+            `(realisations, Npix)`.
     """
+    # FIXME: Needs to know the gain parameters too.
+
     # Set up MPI if enabled
     myid = 0
     nworkers = 1
@@ -67,7 +77,7 @@ def inversion_sample_beta(freqs, data, amps, inv_noise_var, beta_range=(-3.2, -2
         if p % nworkers != myid:
             continue
 
-        if p % 5000 == 0:
+        if p % 5000 == 0 and verbose:
             print("Pixel %d / %d" % (p, Npix))
     
         # Data and model values in this pixel
@@ -135,7 +145,7 @@ def invwishart_sample_covmat(amps):
 
 
 def gcr_sample_pixel(freqs, data, proj_fn, proj_params, delta_gains, inv_noise_var, 
-                       Sinv, realisations=1, nu_ref=300., comm=None):
+                       Sinv, realisations=1, nu_ref=300., comm=None, verbose=False):
     """
     Solve Gaussian Constrained Realisation system for spectral parameters 
     in each pixel.
@@ -164,6 +174,8 @@ def gcr_sample_pixel(freqs, data, proj_fn, proj_params, delta_gains, inv_noise_v
             Reference frequency, in MHz.
         comm (MPI communicator):
             MPI Communicator object.
+        verbose (bool):
+            Whether to print status updates.
     
     Returns:
         g (array_like):
@@ -189,7 +201,7 @@ def gcr_sample_pixel(freqs, data, proj_fn, proj_params, delta_gains, inv_noise_v
     for p in range(Npix):
         
         # Basic status report
-        if p % 5000 == 0:
+        if p % 5000 == 0 and verbose:
             print("%6d / %6d" % (p, Npix))
         
         # MPI worker assignment
