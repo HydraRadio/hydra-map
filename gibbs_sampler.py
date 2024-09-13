@@ -38,6 +38,9 @@ parser.add_argument('--seed', dest='seed', type=int, action='store',
 parser.add_argument('--prefix', dest='prefix', type=str, action='store',
                     default="lwa1_haslam_nside32", 
                     help='Prefix of data files (also used as output prefix).')
+parser.add_argument('--suffix', dest='suffix', type=str, action='store',
+                    default="", 
+                    help='Suffix to add to output files.')
 args = parser.parse_args()
 
 niter = args.niters
@@ -52,6 +55,7 @@ beta_range = (np.min(args.beta_range), np.max(args.beta_range))
 root_dir = args.data_dir
 out_dir = args.out_dir
 prefix = args.prefix
+suffix = args.suffix
 data_path = "%s.npz" % prefix
 
 
@@ -143,8 +147,8 @@ for n in range(niter):
 
     # OUTPUT SAMPLES
     if myid == 0:
-        np.save(os.path.join(out_dir, "%s_amps_%05d" % (prefix, n)), s)
-        np.save(os.path.join(out_dir, "%s_beta_%05d" % (prefix, n)), beta_samples)
+        np.save(os.path.join(out_dir, "%s%s_amps_%05d" % (prefix, suffix, n)), s)
+        np.save(os.path.join(out_dir, "%s%s_beta_%05d" % (prefix, suffix, n)), beta_samples)
 
 # Print message on completion
 if myid == 0:
