@@ -9,8 +9,10 @@ import time, os
 root_dir = "../data"
 prefix = "lwa1_haslam_nside32"
 nside_out = 32
+fwhm = 5. # degrees
 
 # LWA1 radio maps: https://lambda.gsfc.nasa.gov/product/foreground/fg_lwa1_radio_maps_info.html
+lwa1_fwhm = [4.8, 4.5, 4.3, 3.8, 3.4, 2.8, 2.4, 2.3, 2.1] # Beams are not symmetric; this is largest axis
 lwa1_freqs = [35, 38, 40, 45, 50, 60, 70, 74, 80]
 lwa1_maps = [0 for ff in lwa1_freqs]
 lwa1_rms = [0 for ff in lwa1_freqs]
@@ -26,7 +28,7 @@ for i, ff in enumerate(lwa1_freqs):
                                     fname=os.path.join(root_dir, fname), 
                                     nside_out=nside_out, 
                                     mask_val=None, 
-                                    smooth_fwhm=5., 
+                                    smooth_fwhm=np.sqrt(fwhm**2. - lwa1_fwhm[i]**2.), 
                                     grow_mask=3., 
                                     udgrade_pess=False, 
                                     udgrade_power=None,
@@ -36,7 +38,7 @@ for i, ff in enumerate(lwa1_freqs):
                                     fname=os.path.join(root_dir, fname_rms), 
                                     nside_out=nside_out, 
                                     mask_val=None, 
-                                    smooth_fwhm=5., 
+                                    smooth_fwhm=np.sqrt(fwhm**2. - lwa1_fwhm[i]**2.), 
                                     grow_mask=3., 
                                     udgrade_pess=False, 
                                     udgrade_power=None, # FIXME: Should add in quadrature
@@ -48,11 +50,12 @@ for i, ff in enumerate(lwa1_freqs):
     #hp.mollview(lwa1_maps[i])
 
 # Haslam map (reprocessed)
+haslam_fwhm = 56. / 60. # 56 arcmin +/- 1 arcmin
 haslam_408_map, haslam_408_mask = load_and_mask_healpix_map(
                                 fname=os.path.join(root_dir, "haslam408_ds_Remazeilles2014.fits"), 
                                 nside_out=nside_out, 
                                 mask_val=None, 
-                                smooth_fwhm=5., 
+                                smooth_fwhm=np.sqrt(fwhm**2. - haslam_fwhm**2.), 
                                 grow_mask=3., 
                                 udgrade_pess=False, 
                                 udgrade_power=None)

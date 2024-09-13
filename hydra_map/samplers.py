@@ -94,10 +94,10 @@ def inversion_sample_beta(freqs, data, amps, inv_noise_var, beta_range=(-3.2, -2
         uvals = np.random.uniform(size=realisations)
         beta_samples[:,p] = np.array([interp_cdf(u) for u in uvals])
     
-    # Do Allreduce to share beta samples across all workers
+    # MPI Reduce to collect all data on root worker
     if comm is not None:
         beta_samples_all = np.zeros_like(beta_samples.flatten())
-        comm.Allreduce(beta_samples.flatten(), beta_samples_all, op=MPI_SUM)
+        comm.Reduce(beta_samples.flatten(), beta_samples_all, op=MPI_SUM, root=0)
         beta_samples = beta_samples_all.reshape(beta_samples.shape)
 
     return beta_samples
@@ -220,10 +220,10 @@ def gcr_sample_pixel(freqs, data, proj_fn, proj_params, delta_gains, inv_noise_v
             # Do linear solve for symmetric matrix
             s[i,p,:] = solve(lhs_op, rhs, assume_a='sym')
     
-    # FIXME: Need to do MPI communication
+    # MPI communication to collect all valid data on root worker
     total_s = np.zeros_like(s.flatten())
     if comm is not None:
-        comm.Allreduce(s.flatten(), total_s, op=MPI_SUM)
+        comm.Reduce(s.flatten(), total_s, op=MPI_SUM, root=0)
         total_s = total_s.reshape(s.shape)
     else:
         total_s = s
